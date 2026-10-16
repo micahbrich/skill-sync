@@ -78,6 +78,7 @@ adopt() {
     say "adopt $n  ($e)"
     run mkdir -p "$box/skills/inbox"
     run mv "$e" "$box/skills/inbox/$n"
+    run rm -rf "$box/skills/inbox/$n/.git"
     moved=1
   done < <(strays)
   if [ "$moved" = 1 ] && [ "$DRY" = 0 ]; then
@@ -89,17 +90,19 @@ adopt() {
 
 install_skills() {
   for r in $(repos); do
-    say "install $(basename "$r")"
-    run npx -y skills add "$r" --skill '*' -g -y >/dev/null
+    if compgen -G "$r/skills/*/SKILL.md" >/dev/null || compgen -G "$r/plugins/*/skills/*/SKILL.md" >/dev/null; then
+      say "install $(basename "$r")"
+      run npx -y skills add "$r" --skill '*' -g -y >/dev/null || note "install of $r reported errors"
+    fi
     if [ -f "$r/dependencies.txt" ]; then
       while IFS= read -r src; do
         say "install dependency $src"
-        run npx -y skills add "$src" -g -y >/dev/null
+        run npx -y skills add "$src" -g -y >/dev/null || note "install of $src reported errors"
       done < <(grep -v '^[[:space:]]*\(#\|$\)' "$r/dependencies.txt" || true)
     fi
   done
   say "update dependencies"
-  run npx -y skills update -g -y >/dev/null
+  run npx -y skills update -g -y >/dev/null || note "update reported errors"
 }
 
 # A company repo's profile wins over the inbox repo's, so a shared default can ship in the inbox.
@@ -123,7 +126,7 @@ inbox_note() {
     "$(basename "$box")" "$names" "$SKILLS_HOME"
 }
 
-sync_all() { pull; adopt; install_skills; link_profile; }
+sync_all() { pull; install_skills; adopt; link_profile; }
 
 cmd="${1:-sync}"; shift || true
 case "$cmd" in
