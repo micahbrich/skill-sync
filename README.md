@@ -34,7 +34,7 @@ Every step converges. Running twice changes nothing the second time.
 - An empty `.skill-sync-inbox` file marks the one repo that receives adopted skills.
 - `.skill-sync-ignore` in that repo lists glob patterns of skill names never to adopt: skills a tool generates and manages itself, outside the skills CLI lock.
 - `profile.md` holds machine-specific context that shared skills read from `~/.agents/profile.md`.
-- `dependencies.txt` lists `owner/repo` lines to install alongside, like a package.json dependencies block.
+- `dependencies.txt` lists sources to install alongside, one per line as `owner/repo --skill a --skill b`. Name the skills: a bare `owner/repo` installs every skill in that repo, which for a large catalog is hundreds.
 
 ## Filing adopted skills
 

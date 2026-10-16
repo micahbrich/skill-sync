@@ -10,7 +10,8 @@
 #
 # A repo marks itself as the inbox with an empty .skill-sync-inbox file; adopted skills land in its skills/inbox/.
 # Its .skill-sync-ignore lists glob patterns of skill names never to adopt (tool-generated skills that bypass the lock).
-# A repo ships a machine profile as profile.md and third-party installs as dependencies.txt.
+# A repo ships a machine profile as profile.md and its dependencies as dependencies.txt,
+# one line per source: owner/repo --skill a --skill b. A bare owner/repo installs every skill in it.
 set -euo pipefail
 
 SKILLS_HOME="${SKILLS_HOME:-$HOME/skills}"
@@ -97,7 +98,8 @@ install_skills() {
     if [ -f "$r/dependencies.txt" ]; then
       while IFS= read -r src; do
         say "install dependency $src"
-        run npx -y skills add "$src" -g -y >/dev/null </dev/null || note "install of $src reported errors"
+        # shellcheck disable=SC2086  # a line is "owner/repo --skill a --skill b", split on purpose
+        run npx -y skills add $src -g -y >/dev/null </dev/null || note "install of $src reported errors"
       done < <(grep -v '^[[:space:]]*\(#\|$\)' "$r/dependencies.txt" || true)
     fi
   done
