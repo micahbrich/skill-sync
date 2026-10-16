@@ -54,7 +54,8 @@ strays() {
   done
 }
 
-# A stray with the same name as a repo skill is a leftover copy if the contents match; otherwise a real conflict.
+# A stray with the same name as a repo skill is a leftover copy if the contents match. If it differs, its
+# contents are parked under merge/<name>/<host>/ so the repo version can take its place without losing edits.
 repo_copy() { local m; m="$(compgen -G "$SKILLS_HOME/*/skills/$1/SKILL.md" | head -1 || true)"; [ -n "$m" ] && dirname "$m"; return 0; }
 
 pull() {
@@ -72,7 +73,13 @@ adopt() {
     local existing; existing="$(repo_copy "$n")"
     if [ -n "$existing" ]; then
       if diff -rq "$e" "$existing" >/dev/null 2>&1; then say "drop $n  (identical copy of $existing)"; run rm -rf "$e"
-      else note "stray $e differs from $existing, left in place for you to compare"; fi
+      else
+        say "park $n  (differs from $existing; copy kept in merge/$n/$(hostname -s))"
+        run mkdir -p "$box/merge/$n/$(hostname -s)"
+        run cp -R "$e/." "$box/merge/$n/$(hostname -s)/"
+        [ -f "$box/merge/$n/$(hostname -s)/SKILL.md" ] && run mv "$box/merge/$n/$(hostname -s)/SKILL.md" "$box/merge/$n/$(hostname -s)/SKILL.variant.md"
+        moved=1
+      fi
       continue
     fi
     if [ -e "$box/skills/inbox/$n" ]; then note "stray $e clashes with inbox/$n, left in place"; continue; fi
@@ -83,7 +90,7 @@ adopt() {
     moved=1
   done < <(strays)
   if [ "$moved" = 1 ] && [ "$DRY" = 0 ]; then
-    git -C "$box" add skills/inbox
+    git -C "$box" add skills/inbox merge
     git -C "$box" commit --quiet -m "Adopt skills from $(hostname -s)" || true
     git -C "$box" push --quiet || note "push failed, adoption is committed locally"
   fi
