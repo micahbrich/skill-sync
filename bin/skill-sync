@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+# skill-sync: keep every git repo under $SKILLS_HOME (default ~/skills) installed
+# into every agent, and adopt skills that tools created outside any repo.
+#
+#   skill-sync                 pull, adopt strays, install, link profile
+#   skill-sync status          what would change, without changing it
+#   skill-sync hook <agent>    print the inbox note for claude|codex, then sync in the background
+#   skill-sync clone <repo>…   git clone owner/repo into $SKILLS_HOME
+#   skill-sync install         add the SessionStart hook to Claude Code
+#
+# A repo marks itself as the inbox with an empty .skill-sync-inbox file; adopted skills land in its skills/inbox/.
+# A repo ships a machine profile as profile.md and third-party installs as third-party.txt.
+set -euo pipefail
+
+SKILLS_HOME="${SKILLS_HOME:-$HOME/skills}"
+AGENTS="$HOME/.agents"
+LOCK="$AGENTS/.skill-lock.json"
+LOG="$AGENTS/skill-sync.log"
+AGENT_DIRS=("$AGENTS/skills" "$HOME/.claude/skills" "$HOME/.codex/skills" "$HOME/.cursor/skills" "$HOME/.gemini/skills")
+DRY=0
+
+say()  { printf '%s\n' "$*"; }
+note() { printf 'skill-sync: %s\n' "$*" >&2; }
+run()  { if [ "$DRY" = 1 ]; then say "  would: $*"; else "$@"; fi; }
+
+repos()   { for d in "$SKILLS_HOME"/*/; do [ -d "$d/.git" ] && printf '%s\n' "${d%/}"; done; }
+inbox()   { for r in $(repos); do [ -e "$r/.skill-sync-inbox" ] && { printf '%s\n' "$r"; return; }; done; return 1; }
+in_lock() { [ -f "$LOCK" ] && python3 -I -c 'import json,sys; sys.exit(0 if sys.argv[1] in json.load(open(sys.argv[2])).get("skills",{}) else 1)' "$1" "$LOCK"; }
+
+# A real directory with a SKILL.md that the skills CLI does not know about was made by hand.
+strays() {
+  for dir in "${AGENT_DIRS[@]}"; do
+    [ -d "$dir" ] || continue
+    for e in "$dir"/*/; do
+      e="${e%/}"; n="$(basename "$e")"
+      [ -L "$e" ] && continue
+      [ -f "$e/SKILL.md" ] || continue
+      [ "$n" = synced ] && continue
+      in_lock "$n" && continue
+      printf '%s\n' "$e"
+    done
+  done
+}
+
+pull() {
+  for r in $(repos); do
+    say "pull $(basename "$r")"
+    run git -C "$r" pull --ff-only --quiet || note "pull failed in $r, keeping current checkout"
+  done
+}
+
+adopt() {
+  local box; box="$(inbox)" || { note "no repo has a .skill-sync-inbox marker, strays left alone"; return; }
+  local moved=0
+  while IFS= read -r e; do
+    local n; n="$(basename "$e")"
+    if [ -e "$box/skills/inbox/$n" ] || compgen -G "$SKILLS_HOME/*/$n/SKILL.md" >/dev/null || compgen -G "$SKILLS_HOME/*/skills/$n/SKILL.md" >/dev/null; then
+      note "stray $e clashes with an existing skill named $n, left in place"; continue
+    fi
+    say "adopt $n  ($e)"
+    run mkdir -p "$box/skills/inbox"
+    run mv "$e" "$box/skills/inbox/$n"
+    moved=1
+  done < <(strays)
+  if [ "$moved" = 1 ] && [ "$DRY" = 0 ]; then
+    git -C "$box" add skills/inbox
+    git -C "$box" commit --quiet -m "Adopt skills from $(hostname -s)" || true
+    git -C "$box" push --quiet || note "push failed, adoption is committed locally"
+  fi
+}
+
+install_skills() {
+  for r in $(repos); do
+    say "install $(basename "$r")"
+    run npx -y skills add "$r" --skill '*' -g -y >/dev/null
+    if [ -f "$r/third-party.txt" ]; then
+      while IFS= read -r src; do
+        say "install third-party $src"
+        run npx -y skills add "$src" -g -y >/dev/null
+      done < <(grep -v '^[[:space:]]*\(#\|$\)' "$r/third-party.txt" || true)
+    fi
+  done
+  say "update third-party"
+  run npx -y skills update -g -y >/dev/null
+}
+
+# A company repo's profile wins over the inbox repo's, so a shared default can ship in the inbox.
+link_profile() {
+  local chosen="" box; box="$(inbox)" || box=""
+  for r in $(repos); do
+    [ -f "$r/profile.md" ] || continue
+    if [ -z "$chosen" ] || [ "$(dirname "$chosen")" = "$box" ]; then chosen="$r/profile.md"; fi
+  done
+  [ -n "$chosen" ] || return 0
+  say "profile -> $chosen"
+  run mkdir -p "$AGENTS"
+  run ln -sfn "$chosen" "$AGENTS/profile.md"
+}
+
+inbox_note() {
+  local box; box="$(inbox)" || return 0
+  local names; names="$(ls "$box/skills/inbox" 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')"
+  [ -n "$names" ] || return 0
+  printf 'skill-sync: unfiled skills in %s/skills/inbox: %s. Read the README.md of each repo under %s and move each skill into the repo whose README fits (git mv, commit, push). A skill that fits none moves to skills/ in the inbox repo.' \
+    "$(basename "$box")" "$names" "$SKILLS_HOME"
+}
+
+sync_all() { pull; adopt; install_skills; link_profile; }
+
+cmd="${1:-sync}"; shift || true
+case "$cmd" in
+  sync)   sync_all ;;
+  status) DRY=1; sync_all; say "strays:"; strays | sed 's/^/  /' ;;
+  hook)
+    agent="${1:?hook needs an agent: claude|codex}"
+    msg="$(inbox_note)"
+    case "$agent" in
+      claude) [ -n "$msg" ] && say "$msg" ;;
+      codex)  python3 -I -c 'import json,sys; print(json.dumps({"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":sys.argv[1]}}))' "$msg" ;;
+    esac
+    mkdir -p "$AGENTS"
+    (nohup "$0" sync >>"$LOG" 2>&1 &) ;;
+  clone)
+    mkdir -p "$SKILLS_HOME"
+    for r in "$@"; do run git clone --quiet "https://github.com/$r.git" "$SKILLS_HOME/$(basename "$r")"; done ;;
+  install)
+    python3 -I - "$HOME/.claude/settings.json" "$0" <<'PY'
+import json, sys, os
+path, me = sys.argv[1], sys.argv[2]
+s = json.load(open(path)) if os.path.exists(path) else {}
+entry = {"type": "command", "command": f"{me} hook claude"}
+starts = s.setdefault("hooks", {}).setdefault("SessionStart", [])
+if not any(h.get("command") == entry["command"] for m in starts for h in m.get("hooks", [])):
+    starts.append({"matcher": "startup", "hooks": [entry]})
+    json.dump(s, open(path, "w"), indent=2)
+    print("added SessionStart hook to", path)
+else:
+    print("hook already present in", path)
+PY
+    say "for Codex, add a SessionStart hook running: $0 hook codex" ;;
+  *) sed -n '2,12p' "$0"; exit 1 ;;
+esac
