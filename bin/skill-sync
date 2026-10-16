@@ -54,7 +54,7 @@ strays() {
 }
 
 # A stray with the same name as a repo skill is a leftover copy if the contents match; otherwise a real conflict.
-repo_copy() { compgen -G "$SKILLS_HOME/*/skills/$1/SKILL.md" | head -1 | xargs -I{} dirname {}; }
+repo_copy() { local m; m="$(compgen -G "$SKILLS_HOME/*/skills/$1/SKILL.md" | head -1 || true)"; [ -n "$m" ] && dirname "$m"; return 0; }
 
 pull() {
   for r in $(repos); do
