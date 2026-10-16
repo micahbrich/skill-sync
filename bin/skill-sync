@@ -9,7 +9,7 @@
 #   skill-sync install         add the SessionStart hook to Claude Code
 #
 # A repo marks itself as the inbox with an empty .skill-sync-inbox file; adopted skills land in its skills/inbox/.
-# A repo ships a machine profile as profile.md and third-party installs as third-party.txt.
+# A repo ships a machine profile as profile.md and third-party installs as dependencies.txt.
 set -euo pipefail
 
 SKILLS_HOME="${SKILLS_HOME:-$HOME/skills}"
@@ -73,14 +73,14 @@ install_skills() {
   for r in $(repos); do
     say "install $(basename "$r")"
     run npx -y skills add "$r" --skill '*' -g -y >/dev/null
-    if [ -f "$r/third-party.txt" ]; then
+    if [ -f "$r/dependencies.txt" ]; then
       while IFS= read -r src; do
-        say "install third-party $src"
+        say "install dependency $src"
         run npx -y skills add "$src" -g -y >/dev/null
-      done < <(grep -v '^[[:space:]]*\(#\|$\)' "$r/third-party.txt" || true)
+      done < <(grep -v '^[[:space:]]*\(#\|$\)' "$r/dependencies.txt" || true)
     fi
   done
-  say "update third-party"
+  say "update dependencies"
   run npx -y skills update -g -y >/dev/null
 }
 
