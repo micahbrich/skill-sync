@@ -22,7 +22,7 @@ Add a company repo on the machines that should have it, and nowhere else:
 ## What a run does
 
 1. `git pull --ff-only` in each repo under `~/skills`.
-2. Adopt strays. A real directory with a `SKILL.md` in an agent's skills folder that the skills CLI lock file does not know about was made by hand. It moves into the inbox repo's `skills/inbox/`, is committed as "Adopt skills from <host>", and pushed.
+2. Adopt strays. A real directory with a `SKILL.md` in an agent's skills folder that the skills CLI lock file does not know about was made by hand. It moves into the inbox repo's `skills/inbox/`, is committed as "Adopt skills from <host>", and pushed. A stray whose name matches a repo skill is deleted if the contents are identical, and left alone with a note if they differ.
 3. `npx skills add <repo> --skill '*' -g` for each repo, which links its skills into every detected agent. Lines in a repo's `dependencies.txt` install the same way, and `npx skills update -g` refreshes them.
 4. Link the machine profile: the first `profile.md` from a repo that is not the inbox, else the inbox's, to `~/.agents/profile.md`.
 
@@ -32,6 +32,7 @@ Every step converges. Running twice changes nothing the second time.
 
 - Skills live in `skills/<name>/SKILL.md`.
 - An empty `.skill-sync-inbox` file marks the one repo that receives adopted skills.
+- `.skill-sync-ignore` in that repo lists glob patterns of skill names never to adopt: skills a tool generates and manages itself, outside the skills CLI lock.
 - `profile.md` holds machine-specific context that shared skills read from `~/.agents/profile.md`.
 - `dependencies.txt` lists `owner/repo` lines to install alongside, like a package.json dependencies block.
 

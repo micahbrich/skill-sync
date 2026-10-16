@@ -9,6 +9,7 @@
 #   skill-sync install         add the SessionStart hook to Claude Code
 #
 # A repo marks itself as the inbox with an empty .skill-sync-inbox file; adopted skills land in its skills/inbox/.
+# Its .skill-sync-ignore lists glob patterns of skill names never to adopt (tool-generated skills that bypass the lock).
 # A repo ships a machine profile as profile.md and third-party installs as dependencies.txt.
 set -euo pipefail
 
@@ -27,6 +28,15 @@ repos()   { for d in "$SKILLS_HOME"/*/; do [ -d "$d/.git" ] && printf '%s\n' "${
 inbox()   { for r in $(repos); do [ -e "$r/.skill-sync-inbox" ] && { printf '%s\n' "$r"; return; }; done; return 1; }
 in_lock() { [ -f "$LOCK" ] && python3 -I -c 'import json,sys; sys.exit(0 if sys.argv[1] in json.load(open(sys.argv[2])).get("skills",{}) else 1)' "$1" "$LOCK"; }
 
+ignored() {
+  local box; box="$(inbox)" || return 1
+  [ -f "$box/.skill-sync-ignore" ] || return 1
+  while IFS= read -r pat; do
+    [ -n "$pat" ] && [ "${pat#\#}" = "$pat" ] && [[ "$1" == $pat ]] && return 0
+  done < "$box/.skill-sync-ignore"
+  return 1
+}
+
 # A real directory with a SKILL.md that the skills CLI does not know about was made by hand.
 strays() {
   for dir in "${AGENT_DIRS[@]}"; do
@@ -37,10 +47,14 @@ strays() {
       [ -f "$e/SKILL.md" ] || continue
       [ "$n" = synced ] && continue
       in_lock "$n" && continue
+      ignored "$n" && continue
       printf '%s\n' "$e"
     done
   done
 }
+
+# A stray with the same name as a repo skill is a leftover copy if the contents match; otherwise a real conflict.
+repo_copy() { compgen -G "$SKILLS_HOME/*/skills/$1/SKILL.md" | head -1 | xargs -I{} dirname {}; }
 
 pull() {
   for r in $(repos); do
@@ -54,9 +68,13 @@ adopt() {
   local moved=0
   while IFS= read -r e; do
     local n; n="$(basename "$e")"
-    if [ -e "$box/skills/inbox/$n" ] || compgen -G "$SKILLS_HOME/*/$n/SKILL.md" >/dev/null || compgen -G "$SKILLS_HOME/*/skills/$n/SKILL.md" >/dev/null; then
-      note "stray $e clashes with an existing skill named $n, left in place"; continue
+    local existing; existing="$(repo_copy "$n")"
+    if [ -n "$existing" ]; then
+      if diff -rq "$e" "$existing" >/dev/null 2>&1; then say "drop $n  (identical copy of $existing)"; run rm -rf "$e"
+      else note "stray $e differs from $existing, left in place for you to compare"; fi
+      continue
     fi
+    if [ -e "$box/skills/inbox/$n" ]; then note "stray $e clashes with inbox/$n, left in place"; continue; fi
     say "adopt $n  ($e)"
     run mkdir -p "$box/skills/inbox"
     run mv "$e" "$box/skills/inbox/$n"
